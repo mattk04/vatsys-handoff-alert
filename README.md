@@ -1,6 +1,8 @@
 # Handoff Alert Plugin for vatSys
 A vatSys plugin to toggle a sound when a FDR handoff is received, similar to existing EuroScope functionality.
 
+<img width="619" height="324" alt="Handoff Plugin" src="https://github.com/user-attachments/assets/189b6666-7357-40a1-9c1f-3722f8bcaff7" />
+
 ## Build
 Run the following command in the project directory:
 
