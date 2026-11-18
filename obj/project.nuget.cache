@@ -1,0 +1,11 @@
+{
+  "version": 2,
+  "dgSpecHash": "hb0wK7N6nec=",
+  "success": true,
+  "projectFilePath": "C:\\Users\\Matt\\Documents\\GitHub\\vatsys-handoff-alert\\HandoffAlertPlugin.csproj",
+  "expectedPackageFiles": [
+    "C:\\Users\\Matt\\.nuget\\packages\\microsoft.netframework.referenceassemblies\\1.0.3\\microsoft.netframework.referenceassemblies.1.0.3.nupkg.sha512",
+    "C:\\Users\\Matt\\.nuget\\packages\\microsoft.netframework.referenceassemblies.net48\\1.0.3\\microsoft.netframework.referenceassemblies.net48.1.0.3.nupkg.sha512"
+  ],
+  "logs": []
+}

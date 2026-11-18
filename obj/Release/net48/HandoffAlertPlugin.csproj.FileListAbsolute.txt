@@ -1,0 +1,8 @@
+C:\Users\Matt\Documents\GitHub\vatsys-handoff-alert\obj\Release\net48\HandoffAlertPlugin.csproj.AssemblyReference.cache
+C:\Users\Matt\Documents\GitHub\vatsys-handoff-alert\obj\Release\net48\HandoffAlertPlugin.GeneratedMSBuildEditorConfig.editorconfig
+C:\Users\Matt\Documents\GitHub\vatsys-handoff-alert\obj\Release\net48\HandoffAlertPlugin.csproj.CoreCompileInputs.cache
+C:\Users\Matt\Documents\GitHub\vatsys-handoff-alert\obj\Release\net48\HandoffAlertPlugin.sourcelink.json
+C:\Users\Matt\Documents\GitHub\vatsys-handoff-alert\bin\Release\net48\HandoffAlertPlugin.dll
+C:\Users\Matt\Documents\GitHub\vatsys-handoff-alert\bin\Release\net48\HandoffAlertPlugin.pdb
+C:\Users\Matt\Documents\GitHub\vatsys-handoff-alert\obj\Release\net48\HandoffAlertPlugin.dll
+C:\Users\Matt\Documents\GitHub\vatsys-handoff-alert\obj\Release\net48\HandoffAlertPlugin.pdb
