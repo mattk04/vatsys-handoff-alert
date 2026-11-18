@@ -12,6 +12,8 @@ namespace HandoffAlertPlugin
         private readonly string _alertWavPath;
         private readonly object _playbackLock = new object();
         private object _vatSysCachedSound;
+        private int _vatSysSampleRate;
+        private short _vatSysChannels;
         private bool _reportedVatSysRouteFallback;
 
         public HandoffAudioPlayer()
@@ -45,18 +47,14 @@ namespace HandoffAlertPlugin
                 Errors.Add(new Exception("Handoff Alert could not queue audio playback."), "Handoff Alert");
         }
 
-        public void PlayTestAlert()
-        {
-            PlayHandoffAlert();
-        }
-
         private void PlayAlertSynchronously()
         {
             try
             {
                 lock (_playbackLock)
                 {
-                    if (TryPlayThroughVatSys())
+                    bool attemptedVatSysPlayback;
+                    if (TryPlayThroughVatSys(out attemptedVatSysPlayback) || attemptedVatSysPlayback)
                         return;
 
                     if (!string.IsNullOrEmpty(_alertWavPath) && File.Exists(_alertWavPath))
@@ -68,7 +66,7 @@ namespace HandoffAlertPlugin
                     }
                     else
                     {
-                        using (MemoryStream alert = CreateBuiltInAlert())
+                        using (MemoryStream alert = CreateBuiltInAlert(48000, 2))
                         using (var player = new SoundPlayer(alert))
                         {
                             player.PlaySync();
@@ -82,8 +80,9 @@ namespace HandoffAlertPlugin
             }
         }
 
-        private bool TryPlayThroughVatSys()
+        private bool TryPlayThroughVatSys(out bool attemptedPlayback)
         {
+            attemptedPlayback = false;
             Type audioType = typeof(FDP2).Assembly.GetType("vatsys.Audio");
             FieldInfo instanceField = audioType?.GetField(
                 "Instance",
@@ -105,22 +104,65 @@ namespace HandoffAlertPlugin
                 return false;
             }
 
+            object alertEngine = audioType
+                .GetProperty("AlertSoundsEngine", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                ?.GetValue(audioInstance, null);
+            if (!TryGetEngineFormat(alertEngine, out int sampleRate, out short channels))
+            {
+                ReportVatSysRouteFallback("vatSys alert mixer format is unavailable; using the Windows default audio output.");
+                return false;
+            }
+
             try
             {
-                if (_vatSysCachedSound == null)
-                    _vatSysCachedSound = CreateVatSysCachedSound();
+                if (_vatSysCachedSound == null ||
+                    _vatSysSampleRate != sampleRate ||
+                    _vatSysChannels != channels)
+                {
+                    _vatSysCachedSound = CreateVatSysCachedSound(sampleRate, channels);
+                    _vatSysSampleRate = sampleRate;
+                    _vatSysChannels = channels;
+                }
 
+                attemptedPlayback = true;
                 playMethod.Invoke(audioInstance, new[] { _vatSysCachedSound, (object)false });
                 return true;
             }
             catch (Exception ex)
             {
-                ReportVatSysRouteFallback("vatSys alert audio failed; using the Windows default audio output.", ex);
+                ReportVatSysRouteFallback(
+                    "vatSys alert audio failed; using the Windows default audio output. " +
+                    ex.GetBaseException().Message,
+                    ex);
                 return false;
             }
         }
 
-        private object CreateVatSysCachedSound()
+        private static bool TryGetEngineFormat(object alertEngine, out int sampleRate, out short channels)
+        {
+            sampleRate = 0;
+            channels = 0;
+            if (alertEngine == null)
+                return false;
+
+            FieldInfo waveFormatField = alertEngine.GetType().GetField(
+                "waveFormat",
+                BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+            object waveFormat = waveFormatField?.GetValue(alertEngine);
+            if (waveFormat == null)
+                return false;
+
+            PropertyInfo sampleRateProperty = waveFormat.GetType().GetProperty("SampleRate");
+            PropertyInfo channelsProperty = waveFormat.GetType().GetProperty("Channels");
+            if (sampleRateProperty == null || channelsProperty == null)
+                return false;
+
+            sampleRate = (int)sampleRateProperty.GetValue(waveFormat, null);
+            channels = Convert.ToInt16(channelsProperty.GetValue(waveFormat, null));
+            return sampleRate > 0 && channels > 0;
+        }
+
+        private object CreateVatSysCachedSound(int sampleRate, short channels)
         {
             Type cachedSoundType = typeof(FDP2).Assembly.GetType("vatsys.CachedSound");
             if (cachedSoundType == null)
@@ -135,7 +177,7 @@ namespace HandoffAlertPlugin
 
             try
             {
-                using (MemoryStream alert = CreateBuiltInAlert())
+                using (MemoryStream alert = CreateBuiltInAlert(sampleRate, channels))
                 using (FileStream file = new FileStream(temporaryWavPath, FileMode.CreateNew, FileAccess.Write, FileShare.None))
                     alert.CopyTo(file);
 
@@ -168,22 +210,21 @@ namespace HandoffAlertPlugin
                 "Handoff Alert");
         }
 
-        private static MemoryStream CreateBuiltInAlert()
+        private static MemoryStream CreateBuiltInAlert(int sampleRate, short channels)
         {
-            const int sampleRate = 22050;
             const short bitsPerSample = 16;
-            const short channels = 1;
             int[] frequencies = { 880, 880, 1175 };
             const int toneMilliseconds = 110;
             const int gapMilliseconds = 45;
             int toneSamples = sampleRate * toneMilliseconds / 1000;
             int gapSamples = sampleRate * gapMilliseconds / 1000;
-            int sampleCount = frequencies.Length * toneSamples + (frequencies.Length - 1) * gapSamples;
+            int frameCount = frequencies.Length * toneSamples + (frequencies.Length - 1) * gapSamples;
+            int sampleCount = frameCount * channels;
 
             var stream = new MemoryStream();
             using (var writer = new BinaryWriter(stream, System.Text.Encoding.ASCII, true))
             {
-                int dataLength = sampleCount * channels * bitsPerSample / 8;
+                int dataLength = sampleCount * bitsPerSample / 8;
                 writer.Write(System.Text.Encoding.ASCII.GetBytes("RIFF"));
                 writer.Write(36 + dataLength);
                 writer.Write(System.Text.Encoding.ASCII.GetBytes("WAVE"));
@@ -204,13 +245,18 @@ namespace HandoffAlertPlugin
                     {
                         double envelope = Math.Min(1.0, Math.Min(i / 40.0, (toneSamples - i) / 40.0));
                         double sample = Math.Sin(2.0 * Math.PI * frequencies[toneIndex] * i / sampleRate) * envelope;
-                        writer.Write((short)(sample * 14000));
+                        short value = (short)(sample * 14000);
+                        for (int channel = 0; channel < channels; channel++)
+                            writer.Write(value);
                     }
 
                     if (toneIndex < frequencies.Length - 1)
                     {
                         for (int i = 0; i < gapSamples; i++)
-                            writer.Write((short)0);
+                        {
+                            for (int channel = 0; channel < channels; channel++)
+                                writer.Write((short)0);
+                        }
                     }
                 }
             }

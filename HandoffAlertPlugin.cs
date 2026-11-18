@@ -19,22 +19,28 @@ namespace HandoffAlertPlugin
             new Dictionary<string, FDP2.FDR>(StringComparer.OrdinalIgnoreCase);
         private readonly object _lock = new object();
         private readonly Timer _repeatTimer;
+        private readonly Timer _handoffScanTimer;
         private readonly VscsButtonInjector _vscsInjector;
         private readonly HandoffAudioPlayer _audioPlayer;
 
-        private bool _isAlertEnabled = true;
+        private bool _isAlertEnabled;
 
         public HandoffAlertPlugin()
         {
             _audioPlayer = new HandoffAudioPlayer();
-            _vscsInjector = new VscsButtonInjector(OnToggleStateChanged, _audioPlayer.PlayTestAlert);
+            _vscsInjector = new VscsButtonInjector(OnToggleStateChanged);
 
             _repeatTimer = new Timer(5000); // Repeat every 5 seconds
             _repeatTimer.AutoReset = true;
             _repeatTimer.Elapsed += OnRepeatTimerElapsed;
 
+            _handoffScanTimer = new Timer(250);
+            _handoffScanTimer.AutoReset = true;
+            _handoffScanTimer.Elapsed += OnHandoffScanTimerElapsed;
+
             FDP2.FDRsChanged += OnFDRsChanged;
             RefreshFdrSubscriptions();
+            _handoffScanTimer.Start();
             _vscsInjector.Start();
         }
 
@@ -67,6 +73,12 @@ namespace HandoffAlertPlugin
         private void OnFDRsChanged(object sender, EventArgs e)
         {
             RefreshFdrSubscriptions();
+        }
+
+        private void OnHandoffScanTimerElapsed(object sender, ElapsedEventArgs e)
+        {
+            foreach (FDP2.FDR fdr in FDP2.GetFDRs.ToArray())
+                UpdatePendingHandoff(fdr);
         }
 
         private void RefreshFdrSubscriptions()
