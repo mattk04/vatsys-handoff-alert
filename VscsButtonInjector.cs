@@ -14,15 +14,17 @@ namespace HandoffAlertPlugin
         private const int Padding = 3;
 
         private readonly Action<bool> _onToggleChanged;
+        private readonly Action _onTestAudioRequested;
         private readonly Timer _uiPollTimer;
         private bool _isEngaged = true;
         private Control _vscsPanel;
         private HandoffVscsButton _handoffButton;
         private FieldInfo _currentPageField;
 
-        public VscsButtonInjector(Action<bool> onToggleChanged)
+        public VscsButtonInjector(Action<bool> onToggleChanged, Action onTestAudioRequested)
         {
             _onToggleChanged = onToggleChanged;
+            _onTestAudioRequested = onTestAudioRequested;
 
             _uiPollTimer = new Timer();
             _uiPollTimer.Interval = 50;
@@ -119,6 +121,7 @@ namespace HandoffAlertPlugin
                 _handoffButton.IsEngaged = _isEngaged;
                 _onToggleChanged?.Invoke(_isEngaged);
             };
+            _handoffButton.RightClicked += (s, args) => _onTestAudioRequested?.Invoke();
             panel.Controls.Add(_handoffButton);
         }
 
@@ -184,12 +187,21 @@ namespace HandoffAlertPlugin
             }
         }
 
+        public event EventHandler RightClicked;
+
         public HandoffVscsButton()
         {
             SetStyle(ControlStyles.AllPaintingInWmPaint |
                      ControlStyles.OptimizedDoubleBuffer |
                      ControlStyles.ResizeRedraw |
                      ControlStyles.UserPaint, true);
+        }
+
+        protected override void OnMouseUp(MouseEventArgs e)
+        {
+            base.OnMouseUp(e);
+            if (e.Button == MouseButtons.Right && ClientRectangle.Contains(e.Location))
+                RightClicked?.Invoke(this, EventArgs.Empty);
         }
 
         protected override void OnPaint(PaintEventArgs e)

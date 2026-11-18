@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Media;
 using System.Reflection;
+using System.Threading;
 using vatsys;
 
 namespace HandoffAlertPlugin
@@ -9,6 +10,9 @@ namespace HandoffAlertPlugin
     public class HandoffAudioPlayer
     {
         private readonly string _alertWavPath;
+        private readonly object _playbackLock = new object();
+        private object _vatSysCachedSound;
+        private bool _reportedVatSysRouteFallback;
 
         public HandoffAudioPlayer()
         {
@@ -37,54 +41,131 @@ namespace HandoffAlertPlugin
 
         public void PlayHandoffAlert()
         {
+            if (!ThreadPool.QueueUserWorkItem(_ => PlayAlertSynchronously()))
+                Errors.Add(new Exception("Handoff Alert could not queue audio playback."), "Handoff Alert");
+        }
+
+        public void PlayTestAlert()
+        {
+            PlayHandoffAlert();
+        }
+
+        private void PlayAlertSynchronously()
+        {
             try
             {
-                // Attempt to invoke vatSys's internal Audio playback method so the sound
-                // uses the exact Alert/VSCS output device & volume configured in vatSys Settings.
-                Type audioType = typeof(FDP2).Assembly.GetType("vatsys.Audio");
-                if (audioType != null && !string.IsNullOrEmpty(_alertWavPath))
+                lock (_playbackLock)
                 {
-                    MethodInfo playMethod = audioType.GetMethod(
-                        "PlayAlert",
-                        BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static,
-                        null,
-                        new[] { typeof(string) },
-                        null)
-                        ?? audioType.GetMethod(
-                        "PlaySound",
-                        BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static,
-                        null,
-                        new[] { typeof(string) },
-                        null);
-
-                    if (playMethod != null)
-                    {
-                        playMethod.Invoke(null, new object[] { _alertWavPath });
+                    if (TryPlayThroughVatSys())
                         return;
-                    }
-                }
 
-                // Fallback: play the resolved WAV file or system alert chime
-                if (!string.IsNullOrEmpty(_alertWavPath) && File.Exists(_alertWavPath))
-                {
-                    using (var player = new SoundPlayer(_alertWavPath))
+                    if (!string.IsNullOrEmpty(_alertWavPath) && File.Exists(_alertWavPath))
                     {
-                        player.Play();
+                        using (var player = new SoundPlayer(_alertWavPath))
+                        {
+                            player.PlaySync();
+                        }
                     }
-                }
-                else
-                {
-                    using (MemoryStream alert = CreateBuiltInAlert())
-                    using (var player = new SoundPlayer(alert))
+                    else
                     {
-                        player.Play();
+                        using (MemoryStream alert = CreateBuiltInAlert())
+                        using (var player = new SoundPlayer(alert))
+                        {
+                            player.PlaySync();
+                        }
                     }
                 }
             }
             catch (Exception ex)
             {
-                Errors.Add(new Exception($"HandoffAlertPlugin audio playback error: {ex.Message}"), "Handoff Alert");
+                Errors.Add(new Exception("Handoff Alert audio playback failed.", ex), "Handoff Alert");
             }
+        }
+
+        private bool TryPlayThroughVatSys()
+        {
+            Type audioType = typeof(FDP2).Assembly.GetType("vatsys.Audio");
+            FieldInfo instanceField = audioType?.GetField(
+                "Instance",
+                BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic);
+            Type cachedSoundType = typeof(FDP2).Assembly.GetType("vatsys.CachedSound");
+            MethodInfo playMethod = cachedSoundType == null
+                ? null
+                : audioType?.GetMethod(
+                    "PlayAlertSound",
+                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+                    null,
+                    new[] { cachedSoundType, typeof(bool) },
+                    null);
+            object audioInstance = instanceField?.GetValue(null);
+
+            if (audioInstance == null || playMethod == null)
+            {
+                ReportVatSysRouteFallback("vatSys alert audio is not available; using the Windows default audio output.");
+                return false;
+            }
+
+            try
+            {
+                if (_vatSysCachedSound == null)
+                    _vatSysCachedSound = CreateVatSysCachedSound();
+
+                playMethod.Invoke(audioInstance, new[] { _vatSysCachedSound, (object)false });
+                return true;
+            }
+            catch (Exception ex)
+            {
+                ReportVatSysRouteFallback("vatSys alert audio failed; using the Windows default audio output.", ex);
+                return false;
+            }
+        }
+
+        private object CreateVatSysCachedSound()
+        {
+            Type cachedSoundType = typeof(FDP2).Assembly.GetType("vatsys.CachedSound");
+            if (cachedSoundType == null)
+                throw new InvalidOperationException("vatSys CachedSound type was not found.");
+
+            if (!string.IsNullOrEmpty(_alertWavPath) && File.Exists(_alertWavPath))
+                return Activator.CreateInstance(cachedSoundType, new object[] { _alertWavPath });
+
+            string temporaryWavPath = Path.Combine(
+                Path.GetTempPath(),
+                "HandoffAlert-" + Guid.NewGuid().ToString("N") + ".wav");
+
+            try
+            {
+                using (MemoryStream alert = CreateBuiltInAlert())
+                using (FileStream file = new FileStream(temporaryWavPath, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+                    alert.CopyTo(file);
+
+                return Activator.CreateInstance(cachedSoundType, new object[] { temporaryWavPath });
+            }
+            finally
+            {
+                if (File.Exists(temporaryWavPath))
+                {
+                    try
+                    {
+                        File.Delete(temporaryWavPath);
+                    }
+                    catch (Exception ex)
+                    {
+                        Errors.Add(new Exception("Handoff Alert could not remove its temporary sound file.", ex), "Handoff Alert");
+                    }
+                }
+            }
+        }
+
+        private void ReportVatSysRouteFallback(string message, Exception innerException = null)
+        {
+            if (_reportedVatSysRouteFallback)
+                return;
+
+            _reportedVatSysRouteFallback = true;
+            Errors.Add(
+                innerException == null ? new Exception(message) : new Exception(message, innerException),
+                "Handoff Alert");
         }
 
         private static MemoryStream CreateBuiltInAlert()
