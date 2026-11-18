@@ -1,5 +1,5 @@
 # Handoff Alert Plugin for vatSys
-A vatSys plugin to toggle a sound when a FDR handoff is received, similar to existing EuroScope functionality.
+A vatSys plugin to toggle a sound when an inbound FDR handoff is received (played every five seconds until the tag is accepted) or an outgoing handoff is accepted.
 
 Handoff alerts are disabled by default. Click the Handoff Alert button on the VSCS Setup page to enable them.
 
