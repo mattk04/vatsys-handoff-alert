@@ -15,6 +15,7 @@ namespace HandoffAlertPlugin
         public string Name => "Handoff Alert";
 
         private readonly HashSet<string> _pendingHandoffs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        private readonly HashSet<string> _pendingOutgoingHandoffs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<string, FDP2.FDR> _subscribedFdrs =
             new Dictionary<string, FDP2.FDR>(StringComparer.OrdinalIgnoreCase);
         private readonly object _lock = new object();
@@ -84,9 +85,22 @@ namespace HandoffAlertPlugin
         private void RefreshFdrSubscriptions()
         {
             FDP2.FDR[] fdrs = FDP2.GetFDRs.ToArray();
+            int acceptedHandoffsRemoved = 0;
 
             lock (_lock)
             {
+                HashSet<string> currentCallsigns = new HashSet<string>(
+                    fdrs.Where(fdr => !string.IsNullOrEmpty(fdr.Callsign)).Select(fdr => fdr.Callsign),
+                    StringComparer.OrdinalIgnoreCase);
+                foreach (string callsign in _pendingOutgoingHandoffs.Where(callsign => !currentCallsigns.Contains(callsign)).ToArray())
+                {
+                    FDP2.FDR previousFdr;
+                    if (_subscribedFdrs.TryGetValue(callsign, out previousFdr) && !previousFdr.IsTrackedByMe)
+                        acceptedHandoffsRemoved++;
+
+                    _pendingOutgoingHandoffs.Remove(callsign);
+                }
+
                 foreach (FDP2.FDR fdr in _subscribedFdrs.Values)
                     fdr.PropertyChanged -= OnFDRPropertyChanged;
 
@@ -103,6 +117,12 @@ namespace HandoffAlertPlugin
 
             foreach (FDP2.FDR fdr in fdrs)
                 UpdatePendingHandoff(fdr);
+
+            if (_isAlertEnabled)
+            {
+                for (int i = 0; i < acceptedHandoffsRemoved; i++)
+                    _audioPlayer.PlayHandoffAcceptedAlert();
+            }
         }
 
         private void OnFDRPropertyChanged(object sender, PropertyChangedEventArgs e)
@@ -126,10 +146,25 @@ namespace HandoffAlertPlugin
                 return;
 
             bool isIncomingHandoff = IsIncomingHandoffForMe(updated);
+            bool isOutgoingHandoff = IsOutgoingHandoffFromMe(updated);
             bool shouldTriggerImmediate = false;
+            bool shouldTriggerAccepted = false;
 
             lock (_lock)
             {
+                if (isOutgoingHandoff)
+                    _pendingOutgoingHandoffs.Add(updated.Callsign);
+
+                if (_pendingOutgoingHandoffs.Contains(updated.Callsign) && !updated.IsTrackedByMe)
+                {
+                    _pendingOutgoingHandoffs.Remove(updated.Callsign);
+                    shouldTriggerAccepted = true;
+                }
+                else if (!isOutgoingHandoff)
+                {
+                    _pendingOutgoingHandoffs.Remove(updated.Callsign);
+                }
+
                 if (isIncomingHandoff)
                 {
                     // Add returns true only when this is a newly received handoff
@@ -157,6 +192,9 @@ namespace HandoffAlertPlugin
                     _repeatTimer.Start();
                 }
             }
+
+            if (shouldTriggerAccepted && _isAlertEnabled)
+                _audioPlayer.PlayHandoffAcceptedAlert();
         }
 
         public void OnRadarTrackUpdate(RDP.RadarTrack updated)
@@ -167,6 +205,11 @@ namespace HandoffAlertPlugin
         private bool IsIncomingHandoffForMe(FDP2.FDR fdr)
         {
             return MMI.FindTrack(fdr)?.State == MMI.HMIStates.HandoverIn;
+        }
+
+        private bool IsOutgoingHandoffFromMe(FDP2.FDR fdr)
+        {
+            return MMI.FindTrack(fdr)?.State == MMI.HMIStates.HandoverOut;
         }
 
         private void OnRepeatTimerElapsed(object sender, ElapsedEventArgs e)
