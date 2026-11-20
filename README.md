@@ -15,6 +15,6 @@ Run the following command in the project directory:
 Then copy `bin\Release\net48\HandoffAlertPlugin.dll` to your plugins folder.
 
 ## Audio
-A custom `HandoffAlert.wav` beside the plugin DLL is optional; the plugin generates a tone when no file is present. Playback uses vatSys's configured alert audio when available, with Windows default audio as a fallback.
+A custom `HandoffAlert.wav` beside the plugin DLL is optional; the plugin generates a tone with subtle second and third harmonics when no file is present. Playback uses vatSys's configured alert audio when available, with Windows default audio as a fallback.
 
 When another controller accepts an outgoing handoff, the plugin plays the inverse tone (high-to-low instead of low-to-high) if alerts are enabled. A custom `HandoffAccepted.wav` beside the plugin DLL can be used to replace that sound.

@@ -261,7 +261,11 @@ namespace HandoffAlertPlugin
                     for (int i = 0; i < toneSamples; i++)
                     {
                         double envelope = Math.Min(1.0, Math.Min(i / 40.0, (toneSamples - i) / 40.0));
-                        double sample = Math.Sin(2.0 * Math.PI * frequencies[toneIndex] * i / sampleRate) * envelope;
+                        double phase = 2.0 * Math.PI * frequencies[toneIndex] * i / sampleRate;
+                        double sample = (
+                            Math.Sin(phase) +
+                            0.25 * Math.Sin(2.0 * phase) +
+                            0.10 * Math.Sin(3.0 * phase)) * envelope;
                         short value = (short)(sample * 14000);
                         for (int channel = 0; channel < channels; channel++)
                             writer.Write(value);
