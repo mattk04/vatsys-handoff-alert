@@ -40,6 +40,7 @@ namespace HandoffAlertPlugin
             _handoffScanTimer.Elapsed += OnHandoffScanTimerElapsed;
 
             FDP2.FDRsChanged += OnFDRsChanged;
+            Errors.ErrorsChanged += OnErrorsChanged;
             RefreshFdrSubscriptions();
             _handoffScanTimer.Start();
             _vscsInjector.Start();
@@ -74,6 +75,17 @@ namespace HandoffAlertPlugin
         private void OnFDRsChanged(object sender, EventArgs e)
         {
             RefreshFdrSubscriptions();
+        }
+
+        private void OnErrorsChanged(object sender, Errors.ErrorArgs e)
+        {
+            if (!e.Removed &&
+                e.Error != null &&
+                e.Error.Message.StartsWith("Handoff refused by ", StringComparison.OrdinalIgnoreCase) &&
+                _isAlertEnabled)
+            {
+                _audioPlayer.PlayHandoffRejectedAlert();
+            }
         }
 
         private void OnHandoffScanTimerElapsed(object sender, ElapsedEventArgs e)
@@ -149,7 +161,6 @@ namespace HandoffAlertPlugin
             bool isOutgoingHandoff = IsOutgoingHandoffFromMe(updated);
             bool shouldTriggerImmediate = false;
             bool shouldTriggerAccepted = false;
-            bool shouldTriggerRejected = false;
 
             lock (_lock)
             {
@@ -161,11 +172,9 @@ namespace HandoffAlertPlugin
                     _pendingOutgoingHandoffs.Remove(updated.Callsign);
                     shouldTriggerAccepted = true;
                 }
-                else if (!isOutgoingHandoff && _pendingOutgoingHandoffs.Remove(updated.Callsign))
+                else if (!isOutgoingHandoff)
                 {
-                    shouldTriggerRejected =
-                        updated.IsTrackedByMe &&
-                        updated.State == FDP2.FDR.FDRStates.STATE_UNCONTROLLED;
+                    _pendingOutgoingHandoffs.Remove(updated.Callsign);
                 }
 
                 if (isIncomingHandoff)
@@ -198,9 +207,6 @@ namespace HandoffAlertPlugin
 
             if (shouldTriggerAccepted && _isAlertEnabled)
                 _audioPlayer.PlayHandoffAcceptedAlert();
-
-            if (shouldTriggerRejected && _isAlertEnabled)
-                _audioPlayer.PlayHandoffRejectedAlert();
         }
 
         public void OnRadarTrackUpdate(RDP.RadarTrack updated)

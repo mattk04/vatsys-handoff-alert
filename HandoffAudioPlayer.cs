@@ -272,7 +272,7 @@ namespace HandoffAlertPlugin
                     frequencies = new[] { 1175, 880 };
                     break;
                 case AlertType.Rejected:
-                    frequencies = new[] { 659, 784 };
+                    frequencies = new[] { 440, 440 };
                     break;
                 default:
                     frequencies = new[] { 880, 1175 };
