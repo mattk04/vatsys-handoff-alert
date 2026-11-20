@@ -11,9 +11,11 @@ namespace HandoffAlertPlugin
     {
         private readonly string _alertWavPath;
         private readonly string _acceptedWavPath;
+        private readonly string _rejectedWavPath;
         private readonly object _playbackLock = new object();
         private readonly VatSysSoundCache _handoffSoundCache = new VatSysSoundCache();
         private readonly VatSysSoundCache _acceptedSoundCache = new VatSysSoundCache();
+        private readonly VatSysSoundCache _rejectedSoundCache = new VatSysSoundCache();
         private bool _reportedVatSysRouteFallback;
 
         public HandoffAudioPlayer()
@@ -43,35 +45,44 @@ namespace HandoffAlertPlugin
             string acceptedPath = Path.Combine(pluginDir, "HandoffAccepted.wav");
             if (File.Exists(acceptedPath))
                 _acceptedWavPath = acceptedPath;
+
+            string rejectedPath = Path.Combine(pluginDir, "HandoffRejected.wav");
+            if (File.Exists(rejectedPath))
+                _rejectedWavPath = rejectedPath;
         }
 
         public void PlayHandoffAlert()
         {
-            QueueAlertPlayback(false);
+            QueueAlertPlayback(AlertType.Incoming);
         }
 
         public void PlayHandoffAcceptedAlert()
         {
-            QueueAlertPlayback(true);
+            QueueAlertPlayback(AlertType.Accepted);
         }
 
-        private void QueueAlertPlayback(bool isAcceptedHandoff)
+        public void PlayHandoffRejectedAlert()
         {
-            if (!ThreadPool.QueueUserWorkItem(_ => PlayAlertSynchronously(isAcceptedHandoff)))
+            QueueAlertPlayback(AlertType.Rejected);
+        }
+
+        private void QueueAlertPlayback(AlertType alertType)
+        {
+            if (!ThreadPool.QueueUserWorkItem(_ => PlayAlertSynchronously(alertType)))
                 Errors.Add(new Exception("Handoff Alert could not queue audio playback."), "Handoff Alert");
         }
 
-        private void PlayAlertSynchronously(bool isAcceptedHandoff)
+        private void PlayAlertSynchronously(AlertType alertType)
         {
             try
             {
                 lock (_playbackLock)
                 {
                     bool attemptedVatSysPlayback;
-                    if (TryPlayThroughVatSys(isAcceptedHandoff, out attemptedVatSysPlayback) || attemptedVatSysPlayback)
+                    if (TryPlayThroughVatSys(alertType, out attemptedVatSysPlayback) || attemptedVatSysPlayback)
                         return;
 
-                    string wavPath = isAcceptedHandoff ? _acceptedWavPath : _alertWavPath;
+                    string wavPath = GetCustomWavPath(alertType);
                     if (!string.IsNullOrEmpty(wavPath) && File.Exists(wavPath))
                     {
                         using (var player = new SoundPlayer(wavPath))
@@ -81,7 +92,7 @@ namespace HandoffAlertPlugin
                     }
                     else
                     {
-                        using (MemoryStream alert = CreateBuiltInAlert(48000, 2, isAcceptedHandoff))
+                        using (MemoryStream alert = CreateBuiltInAlert(48000, 2, alertType))
                         using (var player = new SoundPlayer(alert))
                         {
                             player.PlaySync();
@@ -95,7 +106,7 @@ namespace HandoffAlertPlugin
             }
         }
 
-        private bool TryPlayThroughVatSys(bool isAcceptedHandoff, out bool attemptedPlayback)
+        private bool TryPlayThroughVatSys(AlertType alertType, out bool attemptedPlayback)
         {
             attemptedPlayback = false;
             Type audioType = typeof(FDP2).Assembly.GetType("vatsys.Audio");
@@ -130,10 +141,10 @@ namespace HandoffAlertPlugin
 
             try
             {
-                VatSysSoundCache cache = isAcceptedHandoff ? _acceptedSoundCache : _handoffSoundCache;
+                VatSysSoundCache cache = GetSoundCache(alertType);
                 if (cache.Sound == null || cache.SampleRate != sampleRate || cache.Channels != channels)
                 {
-                    cache.Sound = CreateVatSysCachedSound(isAcceptedHandoff, sampleRate, channels);
+                    cache.Sound = CreateVatSysCachedSound(alertType, sampleRate, channels);
                     cache.SampleRate = sampleRate;
                     cache.Channels = channels;
                 }
@@ -176,13 +187,13 @@ namespace HandoffAlertPlugin
             return sampleRate > 0 && channels > 0;
         }
 
-        private object CreateVatSysCachedSound(bool isAcceptedHandoff, int sampleRate, short channels)
+        private object CreateVatSysCachedSound(AlertType alertType, int sampleRate, short channels)
         {
             Type cachedSoundType = typeof(FDP2).Assembly.GetType("vatsys.CachedSound");
             if (cachedSoundType == null)
                 throw new InvalidOperationException("vatSys CachedSound type was not found.");
 
-            string wavPath = isAcceptedHandoff ? _acceptedWavPath : _alertWavPath;
+            string wavPath = GetCustomWavPath(alertType);
             if (!string.IsNullOrEmpty(wavPath) && File.Exists(wavPath))
                 return Activator.CreateInstance(cachedSoundType, new object[] { wavPath });
 
@@ -192,7 +203,7 @@ namespace HandoffAlertPlugin
 
             try
             {
-                using (MemoryStream alert = CreateBuiltInAlert(sampleRate, channels, isAcceptedHandoff))
+                using (MemoryStream alert = CreateBuiltInAlert(sampleRate, channels, alertType))
                 using (FileStream file = new FileStream(temporaryWavPath, FileMode.CreateNew, FileAccess.Write, FileShare.None))
                     alert.CopyTo(file);
 
@@ -214,6 +225,32 @@ namespace HandoffAlertPlugin
             }
         }
 
+        private string GetCustomWavPath(AlertType alertType)
+        {
+            switch (alertType)
+            {
+                case AlertType.Accepted:
+                    return _acceptedWavPath;
+                case AlertType.Rejected:
+                    return _rejectedWavPath;
+                default:
+                    return _alertWavPath;
+            }
+        }
+
+        private VatSysSoundCache GetSoundCache(AlertType alertType)
+        {
+            switch (alertType)
+            {
+                case AlertType.Accepted:
+                    return _acceptedSoundCache;
+                case AlertType.Rejected:
+                    return _rejectedSoundCache;
+                default:
+                    return _handoffSoundCache;
+            }
+        }
+
         private void ReportVatSysRouteFallback(string message, Exception innerException = null)
         {
             if (_reportedVatSysRouteFallback)
@@ -225,12 +262,22 @@ namespace HandoffAlertPlugin
                 "Handoff Alert");
         }
 
-        private static MemoryStream CreateBuiltInAlert(int sampleRate, short channels, bool isAcceptedHandoff)
+        private static MemoryStream CreateBuiltInAlert(int sampleRate, short channels, AlertType alertType)
         {
             const short bitsPerSample = 16;
-            int[] frequencies = isAcceptedHandoff
-                ? new[] { 1175, 880, 880 }
-                : new[] { 880, 880, 1175 };
+            int[] frequencies;
+            switch (alertType)
+            {
+                case AlertType.Accepted:
+                    frequencies = new[] { 1175, 880 };
+                    break;
+                case AlertType.Rejected:
+                    frequencies = new[] { 659, 784 };
+                    break;
+                default:
+                    frequencies = new[] { 880, 1175 };
+                    break;
+            }
             const int toneMilliseconds = 110;
             const int gapMilliseconds = 45;
             int toneSamples = sampleRate * toneMilliseconds / 1000;
@@ -284,6 +331,13 @@ namespace HandoffAlertPlugin
 
             stream.Position = 0;
             return stream;
+        }
+
+        private enum AlertType
+        {
+            Incoming,
+            Accepted,
+            Rejected
         }
 
         private sealed class VatSysSoundCache

@@ -149,6 +149,7 @@ namespace HandoffAlertPlugin
             bool isOutgoingHandoff = IsOutgoingHandoffFromMe(updated);
             bool shouldTriggerImmediate = false;
             bool shouldTriggerAccepted = false;
+            bool shouldTriggerRejected = false;
 
             lock (_lock)
             {
@@ -160,9 +161,11 @@ namespace HandoffAlertPlugin
                     _pendingOutgoingHandoffs.Remove(updated.Callsign);
                     shouldTriggerAccepted = true;
                 }
-                else if (!isOutgoingHandoff)
+                else if (!isOutgoingHandoff && _pendingOutgoingHandoffs.Remove(updated.Callsign))
                 {
-                    _pendingOutgoingHandoffs.Remove(updated.Callsign);
+                    shouldTriggerRejected =
+                        updated.IsTrackedByMe &&
+                        updated.State == FDP2.FDR.FDRStates.STATE_UNCONTROLLED;
                 }
 
                 if (isIncomingHandoff)
@@ -195,6 +198,9 @@ namespace HandoffAlertPlugin
 
             if (shouldTriggerAccepted && _isAlertEnabled)
                 _audioPlayer.PlayHandoffAcceptedAlert();
+
+            if (shouldTriggerRejected && _isAlertEnabled)
+                _audioPlayer.PlayHandoffRejectedAlert();
         }
 
         public void OnRadarTrackUpdate(RDP.RadarTrack updated)
