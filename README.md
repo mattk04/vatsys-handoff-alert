@@ -3,6 +3,8 @@ A vatSys plugin to toggle a sound when an inbound FDR handoff is received (playe
 
 Handoff alerts are disabled by default. Click the Handoff Alert button on the VSCS Setup page to enable them.
 
+Integrated into the [Say Again](https://github.com/Verbjimtim/Say-Again) plugin.
+
 <img width="619" height="324" alt="Handoff Plugin" src="https://github.com/user-attachments/assets/189b6666-7357-40a1-9c1f-3722f8bcaff7" />
 
 ## Build
